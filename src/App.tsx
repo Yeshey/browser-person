@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useModelLoader } from './hooks/useModelLoader';
 import { LoadingScreen } from './components/LoadingScreen';
 import { formatChatPrompt, extractAssistantResponse } from './utils/chatFormatter';
-import type { Message } from './types';
+import { Message } from './types';
 import './App.css';
 
 function App() {
@@ -30,6 +30,9 @@ function App() {
     setMessages(newMessages);
     setIsGenerating(true);
     setStreamingText('');
+
+    // Let the UI update before starting generation
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     try {
       const prompt = formatChatPrompt(newMessages);
