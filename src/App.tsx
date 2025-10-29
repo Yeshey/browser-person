@@ -1,57 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
-import { pipeline, TextGenerationPipeline } from '@huggingface/transformers';
+import { useModelLoader } from './hooks/useModelLoader';
+import { LoadingScreen } from './components/LoadingScreen';
+import { formatChatPrompt, extractAssistantResponse } from './utils/chatFormatter';
+import type { Message } from './types';
 import './App.css';
-
-type Message = {
-  role: 'user' | 'assistant';
-  content: string;
-};
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [modelLoading, setModelLoading] = useState(true);
-  const [loadProgress, setLoadProgress] = useState('Initializing...');
-  const generatorRef = useRef<TextGenerationPipeline | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Load model on mount
-  useEffect(() => {
-    const loadModel = async () => {
-      try {
-        setLoadProgress('Downloading model... (this may take 1-2 minutes)');
-        
-        // Using Qwen2.5 - better for chat/instruction following
-        const generator = await pipeline(
-          'text-generation',
-          'onnx-community/Qwen2.5-0.5B-Instruct',
-          { 
-            dtype: 'q4',
-            device: 'wasm',
-            progress_callback: (progress: any) => {
-              if (progress.status === 'progress') {
-                const percent = Math.round((progress.progress || 0) * 100);
-                setLoadProgress(`Loading: ${percent}%`);
-              } else if (progress.status === 'done') {
-                setLoadProgress(`Loading model files...`);
-              }
-            }
-          }
-        );
-
-        generatorRef.current = generator;
-        setLoadProgress('Model loaded! Ready to chat.');
-        setTimeout(() => setModelLoading(false), 500);
-      } catch (error) {
-        console.error('Model loading error:', error);
-        setLoadProgress(`Error loading model: ${error}`);
-      }
-    };
-
-    loadModel();
-  }, []);
+  
+  const { generator, status, progress } = useModelLoader();
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -59,27 +20,22 @@ function App() {
   }, [messages, streamingText]);
 
   const sendMessage = async () => {
-    if (!input.trim() || !generatorRef.current || loading) return;
+    if (!input.trim() || !generator || isGenerating) return;
 
     const userMessage = input.trim();
     setInput('');
     
-    // Add user message
-    const newMessages = [...messages, { role: 'user' as const, content: userMessage }];
+    // Immediately add user message and show assistant is thinking
+    const newMessages: Message[] = [...messages, { role: 'user', content: userMessage }];
     setMessages(newMessages);
-    setLoading(true);
+    setIsGenerating(true);
     setStreamingText('');
 
     try {
-      // Build proper chat format for Qwen2.5
-      const conversation = newMessages.map(m => 
-        `<|im_start|>${m.role}\n${m.content}<|im_end|>`
-      ).join('\n');
-      
-      const prompt = `${conversation}\n<|im_start|>assistant\n`;
+      const prompt = formatChatPrompt(newMessages);
 
-      // Generate with streaming simulation
-      const result = await generatorRef.current(prompt, {
+      // Generate response
+      const result = await generator(prompt, {
         max_new_tokens: 100,
         temperature: 0.7,
         do_sample: true,
@@ -88,32 +44,20 @@ function App() {
       });
 
       const generated = Array.isArray(result) ? result[0] : result;
-      let fullText = (generated as any).generated_text || '';
-      
-      // Extract only the assistant's response
-      let assistantResponse = fullText
-        .split('<|im_start|>assistant')[1]
-        ?.split('<|im_end|>')[0]
-        ?.split('<|im_start|>')[0]
-        ?.trim() || '';
+      const fullText = (generated as any).generated_text || '';
+      const assistantResponse = extractAssistantResponse(fullText);
 
-      // If extraction failed, try simpler approach
-      if (!assistantResponse || assistantResponse.length < 2) {
-        const parts = fullText.split('assistant\n');
-        assistantResponse = parts[parts.length - 1]
-          ?.split('<|')[0]
-          ?.split('user')[0]
-          ?.trim() || 'I apologize, I could not generate a response.';
-      }
-
-      // Simulate streaming effect
+      // Show streaming effect
       let currentText = '';
-      const words = assistantResponse.split(' ');
+      const chars = assistantResponse.split('');
       
-      for (let i = 0; i < words.length; i++) {
-        currentText += (i > 0 ? ' ' : '') + words[i];
+      for (let i = 0; i < chars.length; i++) {
+        currentText += chars[i];
         setStreamingText(currentText);
-        await new Promise(resolve => setTimeout(resolve, 30));
+        
+        // Adjust delay: shorter for spaces, slightly longer for other chars
+        const delay = chars[i] === ' ' ? 10 : 20;
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
       // Add final message
@@ -124,13 +68,14 @@ function App() {
       setStreamingText('');
     } catch (error) {
       console.error('Generation error:', error);
+      const errorMsg = `Error: ${error}`;
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: `Error: ${error}` 
+        content: errorMsg 
       }]);
       setStreamingText('');
     } finally {
-      setLoading(false);
+      setIsGenerating(false);
     }
   };
 
@@ -141,42 +86,8 @@ function App() {
     }
   };
 
-  if (modelLoading) {
-    return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: '100vh',
-        backgroundColor: '#1a1a1a',
-        color: '#fff'
-      }}>
-        <div style={{
-          padding: '40px',
-          textAlign: 'center',
-          maxWidth: '400px'
-        }}>
-          <div style={{
-            width: '50px',
-            height: '50px',
-            border: '3px solid #333',
-            borderTop: '3px solid #fff',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 20px'
-          }} />
-          <h2 style={{ marginBottom: '10px', fontWeight: 'normal' }}>Loading AI Model...</h2>
-          <p style={{ color: '#888', fontSize: '14px' }}>{loadProgress}</p>
-        </div>
-        <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
-      </div>
-    );
+  if (status === 'loading') {
+    return <LoadingScreen progress={progress} />;
   }
 
   return (
@@ -229,7 +140,7 @@ function App() {
             </div>
           ))}
           
-          {/* Streaming text */}
+          {/* Streaming text with cursor */}
           {streamingText && (
             <div style={{ marginBottom: '30px' }}>
               <div style={{ 
@@ -249,8 +160,8 @@ function App() {
                 {streamingText}
                 <span style={{ 
                   display: 'inline-block',
-                  width: '8px',
-                  height: '16px',
+                  width: '2px',
+                  height: '18px',
                   backgroundColor: '#fff',
                   marginLeft: '2px',
                   animation: 'blink 1s infinite'
@@ -259,7 +170,8 @@ function App() {
             </div>
           )}
           
-          {loading && !streamingText && (
+          {/* Thinking indicator (before streaming starts) */}
+          {isGenerating && !streamingText && (
             <div style={{ marginBottom: '30px' }}>
               <div style={{ 
                 color: '#888', 
@@ -272,10 +184,11 @@ function App() {
               </div>
               <div style={{ 
                 fontSize: '16px',
-                color: '#666',
-                fontStyle: 'italic'
+                color: '#666'
               }}>
-                thinking...
+                <span style={{ animation: 'pulse 1.5s ease-in-out infinite' }}>●</span>
+                <span style={{ animation: 'pulse 1.5s ease-in-out 0.2s infinite' }}>●</span>
+                <span style={{ animation: 'pulse 1.5s ease-in-out 0.4s infinite' }}>●</span>
               </div>
             </div>
           )}
@@ -304,7 +217,7 @@ function App() {
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Type a message..."
-            disabled={loading}
+            disabled={isGenerating}
             style={{
               flex: 1,
               padding: '14px',
@@ -318,19 +231,19 @@ function App() {
           />
           <button 
             onClick={sendMessage}
-            disabled={loading || !input.trim()}
+            disabled={isGenerating || !input.trim()}
             style={{
               padding: '14px 28px',
               fontSize: '16px',
-              cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-              backgroundColor: loading || !input.trim() ? '#333' : '#fff',
-              color: loading || !input.trim() ? '#666' : '#000',
+              cursor: isGenerating || !input.trim() ? 'not-allowed' : 'pointer',
+              backgroundColor: isGenerating || !input.trim() ? '#333' : '#fff',
+              color: isGenerating || !input.trim() ? '#666' : '#000',
               border: 'none',
               borderRadius: '4px',
               fontWeight: '500'
             }}
           >
-            Send
+            {isGenerating ? 'Sending...' : 'Send'}
           </button>
         </div>
       </div>
@@ -339,6 +252,10 @@ function App() {
         @keyframes blink {
           0%, 50% { opacity: 1; }
           51%, 100% { opacity: 0; }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
         }
       `}</style>
     </div>
