@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useModelLoader } from './hooks/useModelLoader';
 import { LoadingScreen } from './components/LoadingScreen';
 import { formatChatPrompt, extractAssistantResponse } from './utils/chatFormatter';
-import { Message } from './types';
+import type { Message } from './types';
 import './App.css';
 
 function App() {
