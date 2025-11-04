@@ -1,5 +1,5 @@
 type LoadingScreenProps = {
-  progress: string;
+  progress: number;
 };
 
 export function LoadingScreen({ progress }: LoadingScreenProps) {

@@ -13,11 +13,11 @@ export function useModelLoader() {
         setProgress('Downloading model... (this may take 1-2 minutes)');
         
         const generator = await pipeline(
-          'text-generation',
-          'onnx-community/Qwen2.5-0.5B-Instruct',
-          { 
-            dtype: 'q4',
-            device: 'wasm',
+            'text-generation',
+            'HuggingFaceTB/SmolLM-135M-Instruct', // Only ~135MB!
+            { 
+              dtype: 'q8', // or even q4
+              device: 'wasm',
             progress_callback: (progressData: any) => {
               if (progressData.status === 'progress') {
                 const percent = Math.round((progressData.progress || 0) * 100);
